@@ -1,0 +1,23 @@
+# REVIEW.md
+
+| # | Where (function / line) | What is wrong | How you'd notice it (test, input, or symptom) | How you fixed it |
+|---|---|---|---|---|
+| 1 | `compute_work_hours` | Python's built-in `round()` uses ties-to-even, which may violate the required half-up rounding rule. | Test a duration whose hour value is exactly halfway at two decimal places. | Use `Decimal` with `ROUND_HALF_UP` for required numeric rounding. |
+| 2 | Timestamp conversion in punch-in and punch-out | `datetime.fromtimestamp()` without an explicit timezone depends on the machine's local timezone. | Run the same timestamp test on machines configured with different timezones. | Convert Unix milliseconds using an explicit UTC timezone, then derive the IST attendance date. |
+| 3 | Punch-out record lookup | The query can select the latest earlier record even if it is already closed, instead of selecting an eligible open record. | Create multiple attendance records and punch out when the newest earlier record is already closed. | Filter for open records and choose the most recent eligible punch-in, while preserving overnight-shift handling. |
+| 4 | `PATCH /attendance/{emp_code}/{date}` | Validation does not fully enforce attendance-date consistency for punch-in or the required punch-out ordering and 24-hour limit. | Submit a punch-in on another attendance date, a punch-out before punch-in, or a punch-out over 24 hours later. | Validate the IST attendance date, require punch-out after punch-in, and enforce the maximum duration. |
+| 5 | Attendance PATCH validation | A request that makes no actual change can be rejected before all relevant derived values are reconciled. | Submit a PATCH containing values identical to the stored record. | Compare requested values with stored values, handle true no-ops consistently with the contract, and recompute derived fields when required. |
+| 6 | `GET /analytics/employees/{emp_code}/monthly` | The response omits required `total_late_minutes` and `total_overtime_minutes` fields. | Call the endpoint for a month containing late or overtime records and inspect the response keys and totals. | Add both totals to the MongoDB aggregation and response, using the required rounding rules. |
+| 7 | `GET /admin/explain/{endpoint}` — monthly | The explain pipeline does not fully match the real monthly analytics aggregation. | Compare the explain pipeline and output with the real endpoint's filters, grouping, and sort. | Reuse the same query and aggregation definition for both execution and explain. |
+| 8 | `GET /admin/explain/{endpoint}` — department summary | The explain pipeline performs calculations differently from the real endpoint, which calculates average work hours in Python. | Compare explain stages with the actual summary implementation. | Make the explain pipeline match the real endpoint's aggregation and calculation semantics. |
+| 9 | `GET /admin/explain/{endpoint}` — leaderboard | The explain pipeline's stage order differs from the real leaderboard pipeline. | Compare the department filter, grouping, lookup, ranking, and sorting stages. | Keep the explain pipeline identical to the real endpoint's pipeline and parameters. |
+| 10 | `GET /admin/explain/{endpoint}` — department trend | The explain pipeline does not reproduce the real endpoint's handling of days without logs and uses inconsistent date parameter names. | Request a date range with weekends or no attendance records and compare both pipelines. | Align parameter names and stages, preserve empty days, and make explain use the real endpoint's query logic. |
+| 11 | Timestamp input validation | Optional timestamp fields must still reject seconds, floats, strings, and values outside the permitted millisecond range. | Try seconds instead of milliseconds, a float, a string, and out-of-range integers. | Use strict integer validation and enforce the specified inclusive range consistently on every relevant endpoint. |
+
+## Inspected and not considered defects
+
+- The unique `employees.emp_code` index is appropriate for preventing duplicate employee codes.
+- The unique compound `attendance_logs (emp_code, date)` index is appropriate for enforcing one record per employee per attendance date.
+- The compound `attendance_logs (date descending, emp_code ascending)` index supports date-first attendance queries and their required ordering.
+- The leaderboard's competition-rank behavior is appropriate when implemented by ranking on total late minutes and filtering by rank, because ties at the cutoff should all be returned.
+- A department summary that starts with eligible employees and preserves employees with empty attendance lookups can correctly include employees with zero logs.
